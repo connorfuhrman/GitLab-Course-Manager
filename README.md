@@ -5,4 +5,4 @@ The project began at the University of Arizona in Fall 2020 when I moved the C++
 ## Under Construction
 The repository is currently somewhat underdocumente as I've recently posted to GitHub and am working to generalize and improve the package.
 This is still a work in progress but I'm hopeful that others may benefit from the capabilities and needs of others will drive further improvements. 
-Contact connorfuhrman (at) email (dot) arizona (dot) edu with any questions. 
+Contact connorfuhrman (at) email (dot) arizona (dot) edu with any questions and check the [devel branch](https://github.com/connorfuhrman/GitLab-Course-Manager/tree/devel) for the latest work.
