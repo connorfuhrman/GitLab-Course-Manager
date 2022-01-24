@@ -195,11 +195,10 @@ def make_student_groups(gl, settings_file = None, access_level = gitlab.const.MA
     @params gl The authenticated GitLab object 
     @params settings_file The path to the confuration file"""
     if access_level < gitlab.const.MAINTAINER_ACCESS:
-        logging.warning(f"GitLab access level set to {access_level} which is less than 'maintainer' access. "
-                        "Please check that this is what you really want to do")
+        logging.warning(f"GitLab access level set to {access_level} which is less than 'maintainer' access. ")
     roster = _get_course_roster(settings_file)
-    for i, student in roster.iterrows():
-        (groupname := _get_student_groupname(student))
+    for _ , student in roster.iterrows():
+        groupname = _get_student_groupname(student)
         group_to_create = {
             'name' : groupname,
             'visibility' : 'private',
@@ -207,13 +206,13 @@ def make_student_groups(gl, settings_file = None, access_level = gitlab.const.MA
             'parent_id' : _get_groups_info(settings_file)['student_group_id']
         }
         logging.debug(f"Creating group\n{json.dumps(group_to_create, sort_keys=False, indent=2)}")
-        #group = gl.groups.create(group_to_create, retry_transient_errors = True)
+        group = gl.groups.create(group_to_create, retry_transient_errors = True)
         member_to_add = {
             'username' : _get_student_username(student),
             'access_level' : access_level,
             'user_id' : _get_student_user_id(gl, student)
         }
-        #member = group.members.create(member_to_add, retry_transient_errors = True)
+        member = group.members.create(member_to_add, retry_transient_errors = True)
         logging.debug(f"Adding member to group\n{json.dumps(member_to_add, sort_keys=False, indent=2)}")
 
 
@@ -300,8 +299,8 @@ def post_assignment(gl, temp_proj_path, settings_file = None) -> None :
 ##### Function for local testing #####
 def _localtest(file = None):
     gl = connect(file)
-    #make_student_groups(gl, file)
-    post_assignment(gl, 'homework-1-aww-geez-man', file)
+    make_student_groups(gl, file)
+    #post_assignment(gl, 'homework-1-aww-geez-man', file)
 
 
 
