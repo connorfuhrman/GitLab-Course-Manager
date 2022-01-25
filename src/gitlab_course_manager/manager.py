@@ -39,8 +39,8 @@ def _get_auth_info(config_file = None) -> dict :
     settings = cp.ConfigParser()
     config_file = _get_config_file(config_file)
     settings.read(config_file)
-    _check_config_section_exists('setup', settings, config_file)
-    setup = settings['setup']
+    _check_config_section_exists('auth', settings, config_file)
+    setup = settings['auth']
     # Make sure we have the required information! 
     check = lambda x : _check_config_key_exists(x, setup, config_file)
     check('url')
@@ -50,7 +50,6 @@ def _get_auth_info(config_file = None) -> dict :
     (ssh_type := setup['ssh_type'])
     if ssh_type!= 'id_rsa':
         logging.warning(f"SSH type is '{ssh_type}' but the only tested type is 'id_rsa'")
-    logging.debug(f"Got URl as {setup['url']}")
 
     return {'url' : setup['url'],
             'pa_token' : setup['pa_token'],
@@ -81,16 +80,30 @@ def _get_course_info(config_file = None) -> dict :
     settings = cp.ConfigParser()
     config_file = _get_config_file(config_file)
     settings.read(config_file)
-    if not 'course' in settings:
-        raise ValueError(f"File {config_file} must contain a section '[course]'")
+    _check_config_section_exists('course', settings, config_file)
     course_set = settings['course']
-    if not 'roster' in course_set:
-        raise ValueError(f"File {config_file} must contain an entry 'roster' in the '[course]' section")
+    check = lambda x : _check_config_key_exists(x, course_set, config_file)
+    check('roster')
     roster_f = course_set['roster']
     logging.debug(f"Got course roster {roster_f}")
 
     return {'roster' : roster_f}
 
+
+def _get_grader_info(config_file = None) -> dict :
+    """Helper function to get the configuration parameters related to the course grader
+    @params config_file Path to the config file"""
+    settings = cp.ConfigParser()
+    config_file = _get_config_file(config_file)
+    settings.read(config_file)
+    _check_config_section_exists('grader', settings, config_file)
+    grader_set = settings['grader']
+    check = lambda x : _check_config_key_exists(x, grader_set, config_file)
+    check('runner_id')
+    (runner_id := grader_set['runner_id'])
+    logging.debug(f"Got grader runner ID {runner_id}")
+
+    return {'runner_id' : runner_id}
 
 
 def _get_toplevel_student_group(gl, config_file = None):
@@ -125,6 +138,14 @@ def _get_template_group(gl, config_file = None):
     logging.debug(f"Getting GitLab group object for ID {id} (template group)")
 
     return gl.groups.get(id, lazy=True)
+
+
+def _get_runner(gl, config_file = None):
+    """Helper function to return the GitLab runner object given the params file"""
+    id = _get_grader_info(config_file)['runner_id']
+    logging.debug(f"Got runner ID {id}")
+
+    return gl.runners.get(id, lazy=False)
 
 
 """Helper function (which can be updated in, e.g., a fork) to read the roster into a Pandas
@@ -174,6 +195,16 @@ def _get_student_user_id(gl, student) -> int :
     return id
 
 
+def _get_git_auth(config_file):
+    s = _get_auth_info(config_file)
+    (ssh_path := config.path(s['ssh_path']))
+    ssh_file = lambda s : config.path(f"{ssh_path}/{s['ssh_type']}")
+    (keypair := git.Keypair("git", f"{ssh_file(s)}.pub", ssh_file(s), ""))
+
+    return git.RemoteCallbacks(credentials = keypair)
+    
+
+
 ###### "Public" package methods ######
 
 def connect(settings_file = None) -> None:
@@ -217,7 +248,7 @@ def make_student_groups(gl, settings_file = None, access_level = gitlab.const.MA
 
 
 
-def create_student_assignment(gl, student, student_subgroups, temp_proj_loc, proj_name, settings_file = None) -> int :
+def create_student_assignment(gl, student, student_subgroups, temp_proj_loc, proj_name, settings_file = None) -> None :
     """Function to create a single student assignment from a given template assignment. Returns the 
     GitLab ID of the project"""
     # Get this student's group from the list of subgroups in the top-level group that we get through the argument
@@ -238,22 +269,22 @@ def create_student_assignment(gl, student, student_subgroups, temp_proj_loc, pro
         'namespace_id' : student_group.id
     }
     proj = gl.projects.create(proj_to_create)
+    # Add this project to the course runner
+    runner_id = _get_grader_info(settings_file)['runner_id']
+    runner = proj.runners.create({'runner_id' : runner_id})
+    logging.debug(f"Added project {proj.path_with_namespace} to runner {runner.description}")
     # Delete the git repository in the downloaded template location, reinit, and upload to a project created inside the student's group
     shutil.rmtree(f"{temp_proj_loc}/.git")
-    repo = git.init_repository(temp_proj_loc, origin_url=proj.ssh_url_to_repo)
-    repo.remotes.set_url("origin", proj.ssh_url_to_repo)
+    repo = git.init_repository(temp_proj_loc, initial_head='master', origin_url=proj.ssh_url_to_repo)
     (index := repo.index).add_all()
     index.write()
+    tree = index.write_tree()
     me = git.Signature("Connor Fuhrman", "connorfuhrman@email.arizona.edu")
-    repo.create_commit("refs/head/master", me, me, f"Initial commit for assignment '{proj_name}' for student {group_name}",
-                       index.write_tree(), [repo.head.get_object().hex])
-    remote = index.remotes["origin"]
-    (keypair := git.Keypair("git", os.path.expanduser("~/.ssh/id_rsa.pub"), os.path.expanduser("~/.ssh/id_rsa"), ""))
-    (callbacks := git.RemoteCallbacks(credentials = keypair))
-    remote.push(['refs/heads/master'], callbacks=callbacks)
-    
-        
-    
+    repo.create_commit("HEAD", me, me, f"Initial commit for assignment '{proj_name}' for student {group_name}", tree, [])
+    _ , ref = repo.resolve_refish(refish=repo.head.name)
+    remote = repo.remotes["origin"]
+    remote.push([ref.name], callbacks=_get_git_auth(settings_file))
+
     
 
 def post_assignment(gl, temp_proj_path, settings_file = None) -> None :
@@ -264,9 +295,8 @@ def post_assignment(gl, temp_proj_path, settings_file = None) -> None :
     @params temp_proj_path The local path, e.g., 'homework-1-aww-geez-man' of the template project 
     @params settings_file The parameterization file"""
     roster = _get_course_roster(settings_file)
-    template_group = _get_template_group(gl, settings_file)
     # Get the project which holds the template
-    _p_id = gl.groups.get(template_group.id).projects.list(all=True)
+    _p_id = _get_template_group(gl, settings_file).projects.list(all=True)
     try:
         _idx = [i.path for i in _p_id].index(temp_proj_path)
     except:
@@ -274,35 +304,30 @@ def post_assignment(gl, temp_proj_path, settings_file = None) -> None :
                       "projects: {_p_id}")
         raise RuntimeError(f"Unable to find template project {temp_proj_path}. See logs for further detail")
     template_proj = gl.projects.get(_p_id[_idx].id, lazy=False)
+    del _p_id, _idx
     # Open a temporary directory within the context manager so contents are deleted after
     # this script exits
     with tempfile.TemporaryDirectory() as tmpdirname:
         logging.debug(f"Created temporary download directory: {tmpdirname}")
-        # Set up the PyGit2 module's download step via the SSH config
-        auth_info = _get_auth_info(settings_file)
-        ssh_path = config.path(auth_info['ssh_path'])
-        (keypair := git.Keypair("git", os.path.expanduser("~/.ssh/id_rsa.pub"), os.path.expanduser("~/.ssh/id_rsa"), ""))
-        (callbacks := git.RemoteCallbacks(credentials = keypair))
-        (ssh_url := template_proj.ssh_url_to_repo)
-        logging.debug(f"Downloading repository from {ssh_url}")
         # Download the template project to the newly created directory
+        (ssh_url := template_proj.ssh_url_to_repo)
         (temp_proj_loc := config.path(f"{tmpdirname}/template_proj"))
-        git.clone_repository(ssh_url, temp_proj_loc, callbacks = callbacks)
+        logging.debug(f"Downloading repository from {ssh_url}")
+        git.clone_repository(ssh_url, temp_proj_loc, callbacks = _get_git_auth(settings_file))
         # For each student in the roster create a new git repository with the contents that we just cloned and upload that to
         # a new project as a first commit
         student_subgroups = _get_toplevel_student_group(gl, settings_file).subgroups.list(all=True)
-        proj_ids = [create_student_assignment(gl, s, student_subgroups, temp_proj_loc, temp_proj_path, settings_file) for _ , s in roster.iterrows()]
+        for _ , s in roster.iterrows(): create_student_assignment(gl, s, student_subgroups, temp_proj_loc, temp_proj_path, settings_file)
+        
+
     
-
-
 
 ##### Function for local testing #####
 def _localtest(file = None):
     gl = connect(file)
-    make_student_groups(gl, file)
-    #post_assignment(gl, 'homework-1-aww-geez-man', file)
-
-
+    #make_student_groups(gl, file)
+    post_assignment(gl, 'homework-1-personal-space', file)
+   
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
