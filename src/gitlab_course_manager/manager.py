@@ -202,6 +202,11 @@ def _get_git_auth(config_file):
     (keypair := git.Keypair("git", f"{ssh_file(s)}.pub", ssh_file(s), ""))
 
     return git.RemoteCallbacks(credentials = keypair)
+
+
+def _get_git_commit_signature(config_file = None):
+    """ TODO Update this to get from the settings file"""
+    return git.Signature("Connor Fuhrman", "connorfuhrman@email.arizona.edu")
     
 
 
@@ -279,7 +284,7 @@ def create_student_assignment(gl, student, student_subgroups, temp_proj_loc, pro
     (index := repo.index).add_all()
     index.write()
     tree = index.write_tree()
-    me = git.Signature("Connor Fuhrman", "connorfuhrman@email.arizona.edu")
+    me = _get_git_commit_signature(settings_file)
     repo.create_commit("HEAD", me, me, f"Initial commit for assignment '{proj_name}' for student {group_name}", tree, [])
     _ , ref = repo.resolve_refish(refish=repo.head.name)
     remote = repo.remotes["origin"]
@@ -318,6 +323,51 @@ def post_assignment(gl, temp_proj_path, settings_file = None) -> None :
         # a new project as a first commit
         student_subgroups = _get_toplevel_student_group(gl, settings_file).subgroups.list(all=True)
         for _ , s in roster.iterrows(): create_student_assignment(gl, s, student_subgroups, temp_proj_loc, temp_proj_path, settings_file)
+
+
+def apply_patch_to_assignment(gl, student, proj_path, patch_filename, settings_file = None) -> bool :
+    """Function to apply a patch to a single student's repository. Is called for each student in the 
+    patch_assignment function"""
+    # Find this particular project in the group
+    projs = _get_student_group(gl, student, settings_file).projects.list(all=True)
+    try:
+        _idx = [i.path for i in projs].index(proj_path)
+    except:
+        (msg := f"Cannot find project {proj_path} for {_get_student_groupname(student)}")
+        logging.error(msg)
+        raise RuntimeError(msg)
+    proj = gl.projects.get(projs[_idx].id)
+    # Download the project to the temporary directory
+    with tempfile.TemporaryDirectory() as tmpdir:
+        repo = git.clone_repository(proj.ssh_url_to_repo, tmpdir, callbacks = _get_git_auth(settings_file))
+        with open(patch_filename, 'rb') as patch_file:
+            patch_content = patch_file.read()
+        diff = git.Diff.parse_diff(patch_content)
+        try:
+            repo.apply(diff)
+        except Exception as e:
+            logging.error(f"When attempting to apply patch {patch_filename} for {_get_student_groupname(student)} the "
+                          "exception is {str(e)}")
+            return False
+        (index := repo.index).add_all()
+        index.write()
+        tree = index.write_tree()
+        me = _get_git_commit_signature(settings_file)
+        parent, ref = repo.resolve_refish(repo.head.name)
+        repo.create_commit(ref.name, me, me, f"Apply patch to assignment for {_get_student_groupname(student)}", tree, [parent.oid])
+        repo.remotes["origin"].push([ref.name], callbacks = _get_git_auth(settings_file))
+
+        return True
+                
+    
+                              
+def patch_assignment(gl, proj_path, patch_file, settings_file = None) -> None :
+    """Function to apply a patch to all student repositories. Most likely this is something to do with the README file
+    or other method of outlining the assignment"""
+    roster = _get_course_roster(settings_file)
+    for _, s in roster.iterrows():
+        if not apply_patch_to_assignment(gl, s, proj_path, config.path(patch_file), settings_file):
+            logging.error(f"Unable to patch assignment {proj_path} for {_get_student_groupname(s)}")
         
 
     
@@ -326,7 +376,8 @@ def post_assignment(gl, temp_proj_path, settings_file = None) -> None :
 def _localtest(file = None):
     gl = connect(file)
     #make_student_groups(gl, file)
-    post_assignment(gl, 'homework-1-personal-space', file)
+    #post_assignment(gl, 'homework-1-personal-space', file)
+    patch_assignment(gl, 'homework-1-personal-space', '~/iCloud/UArizona/GitLab-Course-Manager/testing/template_proj/assignment_update.patch')
    
 
 if __name__ == '__main__':
