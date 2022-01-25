@@ -347,7 +347,7 @@ def apply_patch_to_assignment(gl, student, proj_path, patch_filename, settings_f
             repo.apply(diff)
         except Exception as e:
             logging.error(f"When attempting to apply patch {patch_filename} for {_get_student_groupname(student)} the "
-                          "exception is {str(e)}")
+                          f"exception is {str(e)}")
             return False
         (index := repo.index).add_all()
         index.write()
