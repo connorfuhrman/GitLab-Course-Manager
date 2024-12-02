@@ -1,2 +1,11 @@
 # File generted when previewing markdown via Emacs markdown-preview-mode
 .markdown-preview.html
+
+# Python virtual environment
+gcm-env
+
+# Python cache
+__pycache__
+
+# Testing folder
+testing

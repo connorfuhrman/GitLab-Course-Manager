@@ -1,0 +1,5 @@
+python-gitlab >= 3.0.0
+pandas
+configparser
+openpyxl
+pygit2
