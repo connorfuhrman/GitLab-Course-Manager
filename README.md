@@ -27,11 +27,10 @@ GCM makes some fundamental assumptions about the layout of the course's GitLab g
 ```
 ECE 275 FS 2021
 	Individual Student Groups
-		Elon Musk
-		Bill Gates
-		Jeff Bezos
+		Alice Apple
+		Bobby Brige
+		Charlie Chimichanga
 		...
-		Brandon Biden
 ```
 		
 
